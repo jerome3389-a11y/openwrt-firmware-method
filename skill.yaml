@@ -1,0 +1,5 @@
+name: "openwrt_firmware_method"
+title: "OpenWrt firmware build, debug, and release method"
+description: "Method for building, debugging, and releasing OpenWrt firmware with Qualcomm NSS acceleration in CI, proven on real hardware before any flash."
+category: "Work and knowledge"
+include_in_prompt: false

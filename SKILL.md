@@ -22,6 +22,16 @@
 
 - Do not use post build binary dissection as a discovery method. A structural check of a built image can reject a broken image, but it never yields a cause. Cause finding is source reading only.
 
+- Debug IPv6 by layers, in order: prefix delegation, then forwarding, then DNS. A client that has a global address but cannot use it has passed delegation and failed later, so do not re-diagnose delegation. Test forwarding with a numeric ping before you test name resolution, because a DNS failure cannot explain a failed ping.
+
+- Know what ip6assign controls. It selects which prefix is delegated, not whether delegation happens. An ip6assign of 64 on a /56 upstream leaves no free /64, so odhcpd re-delegates the LAN's own prefix and the downstream LAN collides with the upstream LAN instead of failing to get a prefix. Set ip6assign to 60 to hand the downstream a distinct /64.
+
+- Use a known good firmware as a control case. If the same hardware, topology, and settings work on the control firmware and fail on yours, the fault is in your firmware, and every earlier conclusion drawn without that control is suspect.
+
+- Check NDP when addresses are present but unusable. A client can receive a global address from a Router Advertisement while Neighbor Solicitation and Advertisement are broken, so it cannot resolve its gateway's link-local address to a MAC. On a LAN client run `ip -6 neigh` and check the gateway's fe80:: entry: REACHABLE or STALE means NDP works, FAILED or INCOMPLETE means it does not. Confirm with a packet capture of ICMPv6 NS and NA on the LAN, and isolate the cause by disabling hardware offload and retesting.
+
+- Remember how LuCI applies settings. Save writes the config files without restarting the service, Save and Apply restarts it, and the same UCI section can be edited from more than one page. A setting that seems overwritten, conflicting, or slow to take effect is often a service that was never restarted, not a wrong value.
+
 ## Build the image so a failure names itself
 
 - Guard the resolved config after defconfig. Check every required symbol and report every missing symbol at once, so one failure names all drops instead of dying on the first.
@@ -70,6 +80,26 @@
 
 - Keep the front end in mind when you judge wireless strength. A receive only front end with no power amplifier gives weak transmit by hardware, and no config change fixes it.
 
+- A WAN interface and the LAN bridge sharing one MAC is normal DSA behavior, not a bug. The two CPU ports still have distinct MACs from the factory data, and the bridge inherits one of them. Do not chase it as a connectivity cause.
+
+- Read MAC addresses from the factory partition the way the device tree does. On these devices the calibration partition holds the base MAC at offset 0 for the WAN CPU port and base plus one at offset 6 for the LAN CPU port. Verify the offsets in the device tree before you conclude the MAC assignment is wrong.
+
+- Never bake a config that reads an address at first boot and keeps it. A firewall redirect written once from the LAN IP at boot silently breaks when the LAN IP changes later, because the one shot script never runs again. Prefer a redirect that resolves the address at runtime, or drop the redirect.
+
+- Do not re-set a default the tree already ships. The shipped dnsmasq config already sets a cache size of 1000, so a preset that sets it again is dead weight. Check the tree default before you add a preset.
+
+- dnsmasq already caches A, AAAA, CNAME, and SRV records with nothing checked. The cache arbitrary record option only adds record types on top of those defaults, so checking A or AAAA there is a no-op.
+
+- Restrict the password page username list to root. The page lists every user from the password file, and the no password set banner can cover the root entry so saving fails validation silently. The username field is a text input, so typing the name manually still works when the list is trimmed.
+
+## Diagnose a build failure from the log
+
+- Read the failing link error, not the failing step name. A link error naming an undefined symbol in a specific object file points at the package that pulls that object in, not at the build system.
+
+- A package that defaults on for one architecture can break the build on that architecture. PassWall's Rust Shadowsocks client defaults on for aarch64 and pulls a crate whose NEON assembly does not link against musl, so disable the client in the config when the project does not use it instead of patching the crate.
+
+- Full Cone NAT and packet offload are treated as mutually exclusive upstream. Full Cone needs the nft fullcone module and a firewall patch, and the patch's own default config turns flow offloading off. Hardware offload through the NSS engine is a separate path from firewall flow offloading, so whether Full Cone and NSS coexist is unverified until tested on the device, not decidable from the config.
+
 ## Run a hardware project with the user
 
 - Treat a flash as a separate decision from a build. Building an image never authorizes flashing it, and an unverified fallback makes a flash high risk. State the fallback status every time a flash comes up.
@@ -79,6 +109,8 @@
 - Keep the release page clean. Delete releases the user no longer needs, keep only firmware in future releases, and say plainly when a running build will still publish the old format.
 
 - Let the user ask for build status. Do not schedule build monitoring. Act autonomously on a build failure only when the user has authorized that loop, and notify at each step without waiting for approval.
+
+- Do not switch the kernel or base tree on a working build without a full re-verification plan. A base change means porting the device definition and partition layout and re-verifying wireless, offload, and IPv6 from scratch, so defer it until the current stack is fully verified on the device.
 
 ## Available connectors
 

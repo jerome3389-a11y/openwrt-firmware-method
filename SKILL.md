@@ -24,13 +24,21 @@
 
 - Debug IPv6 by layers, in order: prefix delegation, then forwarding, then DNS. A client that has a global address but cannot use it has passed delegation and failed later, so do not re-diagnose delegation. Test forwarding with a numeric ping before you test name resolution, because a DNS failure cannot explain a failed ping.
 
-- Know what ip6assign controls. It selects which prefix is delegated, not whether delegation happens. An ip6assign of 64 on a /56 upstream leaves no free /64, so odhcpd re-delegates the LAN's own prefix and the downstream LAN collides with the upstream LAN instead of failing to get a prefix. Set ip6assign to 60 to hand the downstream a distinct /64.
+- Know what ip6assign controls. It selects which prefix is delegated, not whether delegation happens. A LAN ip6assign of 64 leaves odhcpd no free /64, so the downstream router gets no PD prefix at all. Set it to /63 or shorter: 63, 62, 61, 60, 59, 57 and /56 were all tested working on 2026-11-10, and the main LAN now runs /56. LAN clients still get a /64 by RA/SLAAC either way.
+
+- Changing LAN ip6assign takes effect without restarting odhcpd or the router. Tested back and forth on 2026-11-10: the downstream delegated prefix changed on each edit with no restart. Do not tell the user a restart is required.
+
+- Enable PD only on the WAN PPPoE interface. Keep PD off on wan6 and wan_6. The ISP address and the /56 PD attach to wan_6, but the switch lives on WAN PPPoE. PD needs both sides: upstream delegating and downstream requesting. The secondary LAN itself needs no PD, only RA to its clients.
 
 - Use a known good firmware as a control case. If the same hardware, topology, and settings work on the control firmware and fail on yours, the fault is in your firmware, and every earlier conclusion drawn without that control is suspect.
 
 - Check NDP when addresses are present but unusable. A client can receive a global address from a Router Advertisement while Neighbor Solicitation and Advertisement are broken, so it cannot resolve its gateway's link-local address to a MAC. On a LAN client run `ip -6 neigh` and check the gateway's fe80:: entry: REACHABLE or STALE means NDP works, FAILED or INCOMPLETE means it does not. Confirm with a packet capture of ICMPv6 NS and NA on the LAN, and isolate the cause by disabling hardware offload and retesting.
 
 - Remember how LuCI applies settings. Save writes the config files without restarting the service, Save and Apply restarts it, and the same UCI section can be edited from more than one page. A setting that seems overwritten, conflicting, or slow to take effect is often a service that was never restarted, not a wrong value.
+
+- Verify a UCI option name in three places before you use it: the LuCI source (which key the form reads and writes), the script that generates the daemon config (which variable it reads), and the schema (whether the key is valid on that section). A name that exists somewhere else is not the same option: `multicast_to_unicast` is a bridge-port option, the wifi one is `multicast_to_unicast_all` (LuCI wireless.js, hostapd.sh). Setting the wrong name silently does nothing and LuCI shows it unset.
+
+- LuCI Save drops UCI options that have no field in its form, even on a section you did not touch. `bss_transition` and `wnm_sleep_mode` have no LuCI field, so any WiFi edit wipes them. Options that must survive LuCI edits need a boot-time restore (a keep script), not a one-shot preset.
 
 ## Build the image so a failure names itself
 
@@ -82,11 +90,19 @@
 
 - A WAN interface and the LAN bridge sharing one MAC is normal DSA behavior, not a bug. The two CPU ports still have distinct MACs from the factory data, and the bridge inherits one of them. Do not chase it as a connectivity cause.
 
-- Read MAC addresses from the factory partition the way the device tree does. On these devices the calibration partition holds the base MAC at offset 0 for the WAN CPU port and base plus one at offset 6 for the LAN CPU port. Verify the offsets in the device tree before you conclude the MAC assignment is wrong.
+- Read MAC addresses from the factory partition the way the device tree does. On these devices the calibration partition holds two independent factory MACs (different OUIs, not base plus one): offset 0 for the WAN CPU port and offset 6 for the LAN CPU port. Verify the offsets in the device tree before you conclude the MAC assignment is wrong.
 
 - Never bake a config that reads an address at first boot and keeps it. A firewall redirect written once from the LAN IP at boot silently breaks when the LAN IP changes later, because the one shot script never runs again. Prefer a redirect that resolves the address at runtime, or drop the redirect.
 
+- Bake WiFi as a preset with uci by radio name, never by device path. Set SSID, key, channel, and htmode on radio0/radio1 in 99-custom and let the paths come from the image's own wireless defaults; a baked whole-file wireless config with a wrong path breaks WiFi outright (extra network, unbound interface).
+
 - Do not re-set a default the tree already ships. The shipped dnsmasq config already sets a cache size of 1000, so a preset that sets it again is dead weight. Check the tree default before you add a preset.
+
+- First-boot scripts run in lexical order, so a later base-tree defaults script can undo your 99-custom change in the same boot. Verify the live state from a config backup, not from the repo file: the qca-nss-drv enable block in 99-custom was undone by nss-dwmac.defaults, which disables the driver init on purpose because nss-irq-affinity does the job after the plane is armed.
+
+- A trigsoft U-Boot factory flash wipes the overlay, so first-boot scripts run again on a re-flash and no stale UCI section survives it. Do not tell the user to delete a leftover section after flashing; if the fresh first-boot state is wrong, fix the firmware and rebuild. Put structural fixes in the device tree or a static file that is read on every boot, never in a first-boot script or a board.json setting that only takes effect when the board file is regenerated.
+
+- Give a DSA user port its own MAC in the device tree, not through the board conduit. A port with an nvmem MAC cell takes that address at kernel probe time, independent of board.json and the overlay; a port that relies on the conduit inherits the default CPU port's MAC and only changes when the board file is regenerated.
 
 - dnsmasq already caches A, AAAA, CNAME, and SRV records with nothing checked. The cache arbitrary record option only adds record types on top of those defaults, so checking A or AAAA there is a no-op.
 
